@@ -1,0 +1,100 @@
+from keras.optimizers import Adam, SGD
+from keras import backend as K
+from keras.callbacks import ModelCheckpoint
+from sklearn.model_selection import train_test_split
+import model as model
+import pandas as pd
+import numpy as np
+import random
+import cv2
+import argparse
+import locale
+import os
+
+
+batch_size = 32   
+
+
+def root_mean_squared_error(y_true, y_pred):
+        return K.sqrt(K.mean((K.square(y_pred - y_true)))) 
+    
+def euclidean_distance(y_true, y_pred):
+        return (K.mean((K.square(y_pred - y_true))))*1/2
+    
+def read_file():
+    file_path = "training.csv"
+    col_header = ["subDirectory_filePath","label"]
+    data_frame = pd.read_csv(file_path, sep=",", header=None, names=col_header)
+        
+        
+    images_data = []
+    y_array = []
+        
+    image_paths = data_frame['subDirectory_filePath']
+    y_label = data_frame['label'].astype("float")   
+    
+    for (image_path, y) in zip(image_paths, y_label)):
+        img = cv2.imread(image_path)
+        if img is not None:            
+            images_data.append(image_path)
+            y_array.append(y)
+        
+        
+           
+    split = train_test_split(y_array, images_data, test_size=0.25, random_state=42)
+    (train_y, test_y, train_images, test_images) = split
+  
+    return [train_y, test_y, train_images, test_images]
+
+def generate_data(data_images, dataset_y):
+    images = []
+    y_array = []
+    prev_data_images = None
+    for i in range(0, batch_size):    
+        if data_images[i] is None:
+            data_images[i] = prev_data_images
+        image_path= data_images[i]
+        prev_data_images = data_images[i]
+        img = cv2.imread(image_path)
+        image = cv2.resize(crop_image, (256, 256))
+        normalized_image = image / 255.0
+        images.append(normalized_image)
+        y_array.append(dataset_y[i])    
+          
+    images_ = np.array(images)        
+    return images_, y_array
+            
+  
+def data_generator(data_y, data_images, batch_size):    
+    while 1:
+        for i in range(0, len(data_images)-batch_size-1, batch_size): # 1875 * 32 = 60000 -> # of training samples
+            batch_data_images = data_images[i:i+batch_size]
+            batch_data_y = data_y[i:i+batch_size]
+            y, images = generate_data(batch_data_images, batch_data_y)
+            yield y, images
+
+          
+            
+data_set_processed = read_file()
+
+train_y, test_y, train_images, test_images = data_set_processed
+
+num_train_samples = len(train_images)
+num_test_samples = len(test_images)
+
+model = model.AlexNet(256, 256, 3)
+
+opt = SGD(lr=0.001, momentum=0.9, nesterov=True) #, decay=1e-6
+
+model.compile(loss=euclidean_distance, optimizer=opt)    #this demostrate that you can define your own loss function
+
+
+
+# train the model
+# checkpoint
+filepath="weights-improvement-{epoch:02d}.hdf5"
+checkpoint = ModelCheckpoint(filepath, verbose=1, save_best_only=True, mode='max')
+callbacks_list = [checkpoint]
+
+#checkpointer = ModelCheckpoint("weight_valence.hdf5", verbose=1, save_best_only=True)
+model.fit_generator(data_generator(train_y, train_images, batch_size), steps_per_epoch=(num_train_samples // batch_size), validation_data=data_generator(test_y, test_images, batch_size), validation_steps=(num_test_samples // batch_size), epochs=16, callbacks=callbacks_list)
